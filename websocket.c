@@ -338,7 +338,12 @@ static int websocket_client_recv(struct websocket_client *wsc)
         }
     }
 
-    if (wsc->msg->type == WDT_DISCONN) {
+    if (wsc->msg) {
+        if (wsc->msg->type == WDT_DISCONN) {
+            remove_client(wsc);
+            return 0;
+        }
+    } else {
         remove_client(wsc);
         return 0;
     }
