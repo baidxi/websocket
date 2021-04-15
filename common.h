@@ -43,8 +43,7 @@ do{ \
 struct config {
     const char *addr;
     uint16_t port;
-    const char **path;
-    int n;
+    const char *path;
 };
 
 int new_thread(void *args, void *thread_cb);

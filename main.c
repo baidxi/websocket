@@ -49,9 +49,8 @@ struct config *parse_args(int argc, char **argv)
                         }
                         break;
                     case 'P':
-                        conf->path[i] = strdup(optarg);
-                        i+=1;
-                        conf->n = i;
+                        conf->path = strdup(optarg);
+
                         break;
                 }
             case 'i':
@@ -66,9 +65,8 @@ struct config *parse_args(int argc, char **argv)
                 }
                 break;
             case 'P':
-                conf->path[i] = strdup(optarg);
-                i+=1;
-                conf->n = i;
+                conf->path = strdup(optarg);
+
                 break;
         }
     }
@@ -86,27 +84,8 @@ int main(int argc, char **argv) {
 
     struct socket_server *sock = new_socket(conf->addr, conf->port);
 
-    for (i = 0; i < conf->n; i++)
-    {
-        struct websocket_server *wss = new_weboskcet_server(conf->path[i]);
-        if (i == 0) {
-            sock->wss = wss;
-            cur = sock->wss;
-            next = cur->next;
-        }     
-        else {
-            while (cur != NULL)
-            {
-                if(next == NULL)
-                    cur->next = wss;
-                else {
-                    cur = next;
-                    if (next)
-                        next = cur->next;
-                } 
-            }
-        }
-    }
+    struct websocket_server *wss = new_weboskcet_server(conf->path);
+
 
     
 
@@ -116,7 +95,8 @@ int main(int argc, char **argv) {
     if (sock)
         sock->start(sock);
 
-    if (sock->wss) {
+    if (wss) {
+        sock->wss = wss;
         sock->wss->start_svr(sock->wss, 1024);
     }
 

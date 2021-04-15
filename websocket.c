@@ -9,11 +9,12 @@
 #include <openssl/sha.h>
 #include <sys/epoll.h>
 #include <sys/select.h>
+#include <json-c/json.h>
 #include "http_parser.h"
 #include "base64.h"
 #include "common.h"
 #include "package.h"
-
+#include "ubus.h"
 
 void websocket_delayus(unsigned int us)
 {
@@ -196,31 +197,22 @@ static int websocket_waitdata(int fd)
 
 }
 
-static struct websocket_server *isValid_request(struct websocket_server *wss, struct http_hdr *hdr)
+static int isValid_request(struct websocket_server *wss, struct http_hdr *hdr)
 {
-    struct websocket_server *cur = wss;
-    struct websocket_server *next = cur->next;
+
     if (strcmp(hdr->connection, "Upgrade"))
-        return NULL;
+        return -1;
 
     if (strcmp(hdr->upgrade, "websocket"))
-        return NULL;
+        return -1;
 
     if (atoi(hdr->wsc->ver) < 13)
-        return NULL;
+        return -1;
 
-    while(cur != NULL)
-    {
-        if (strcmp(cur->path, hdr->wsc->path))
-        {
-            cur = next;
-            if (next)
-                next = cur->next;
-        } else {
-            return cur;
-        } 
-    }
-    return NULL;
+    if (strcmp(wss->path, hdr->wsc->path))
+        return -1;
+
+    return 0;
 }
 
 int websocket_add_client(struct websocket_server *wss, int fd)
@@ -228,7 +220,6 @@ int websocket_add_client(struct websocket_server *wss, int fd)
     char buf[1024] = {0};
     struct http_hdr *http;
     int n = 0;
-    struct websocket_server *svr = NULL;
 
     if (websocket_waitdata(fd) == 0) {
         pr_err("timeout\n");
@@ -240,7 +231,7 @@ int websocket_add_client(struct websocket_server *wss, int fd)
 
     http = http_parse_request(NULL, buf, n);
 
-    if ((svr = isValid_request(wss, http)) == NULL) {
+    if (isValid_request(wss, http) < 0) {
         free(http->wsc);
         free(http);
         close(fd);
@@ -259,7 +250,7 @@ int websocket_add_client(struct websocket_server *wss, int fd)
     if (wsc->OnLogin)
         wsc->OnLogin(wsc);
 
-    websocket_client_add_to_tail(svr, wsc);
+    websocket_client_add_to_tail(wss, wsc);
 
     return 0;
 }
@@ -270,6 +261,7 @@ static int websocket_start(struct websocket_server *wss, int load)
     if (!wss)
         return -1;
     wss->load = load;
+    pr_info("websocket start path:%s load %d\n", wss->path, load);
     return new_thread(wss, &websocket_service_thread);
 }
 
@@ -399,7 +391,36 @@ int __attribute__((weak)) OnLogin(struct websocket_client *wsc)
 
 int __attribute__((weak)) OnMessage(struct websocket_client *wsc, const uint8_t *data, ssize_t len, websocket_data_type type)
 {
-    wsc->send(wsc, data, len, 0, type);
+  //  wsc->send(wsc, data, len, 0, type);
+
+    if (type == WDT_TXTDATA) {
+        pr_info("recv:%s\n", data);
+        json_object *obj = json_tokener_parse(data);
+        if (obj) {
+            json_object *jsid = json_object_object_get(obj, "sid");
+            json_object *jmethod = json_object_object_get(obj, "method");
+            json_object *jfunc = json_object_object_get(obj, "func");
+            json_object *jscope = json_object_object_get(obj, "scope");
+            json_object *jparams = json_object_object_get(obj, "params");
+
+            if (!jsid && !jmethod && !jfunc && !jscope)
+                return -1;
+
+            const char *params = NULL;
+            const char *sid = json_object_get_string(jsid);
+            const char *method = json_object_get_string(jmethod);
+            const char *func = json_object_get_string(jfunc);
+            const char *scope = json_object_get_string(jscope);
+            if (jparams)
+                params = json_object_get_string(jparams);
+
+            wsc->ubus->call(wsc->ubus, sid, scope, func, method, params);
+
+        } else {
+            return -1;
+        }
+    }
+
     free(wsc->msg->data);
     free(wsc->msg);
 }
@@ -416,6 +437,7 @@ struct websocket_client *new_client(void){
     wsc->OnLogin = &OnLogin;
     wsc->OnMessage = &OnMessage;
     wsc->OnExit = &OnExit;
+    wsc->ubus = new_ubus(wsc);
     return wsc;
 }
 

@@ -9,6 +9,7 @@
 #include <pthread.h>
 #include "socket.h"
 #include "websocket.h"
+#include "ubus.h"
 
 #define WEBSOCKET_SHAKE_KEY_LEN 16
 
@@ -94,7 +95,8 @@ struct websocket_client {
     int (*OnMessage)(struct websocket_client *, const uint8_t *, ssize_t, websocket_data_type);
     int (*OnExit)(struct websocket_client *);
     int (*recv)(struct websocket_client *);
-    int (*send)(struct websocket_client *, char *, ssize_t, bool, websocket_data_type);
+    int (*send)(struct websocket_client *wsc, char *data, ssize_t len, bool mask, websocket_data_type type);
+    struct ubus *ubus;
 };
 
 struct websocket_server {
