@@ -240,7 +240,7 @@ int websocket_add_client(struct websocket_server *wss, int fd)
 
     http = http_parse_request(NULL, buf, n);
 
-    if ((svr = isValid_request(wss, http)) < 0) {
+    if ((svr = isValid_request(wss, http)) == NULL) {
         free(http->wsc);
         free(http);
         close(fd);
