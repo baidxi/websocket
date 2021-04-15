@@ -11,7 +11,7 @@ link_libraries("libjson-c.so")
 link_libraries("libblobmsg_json.so")
 
 IF (${CMAKE_BUILD_TYPE} STREQUAL Debug)
-        MESSAGE("Adding Debug flags ...")
+        MESSAGE("-- Adding Debug flags ...")
         ADD_DEFINITIONS(-DDEBUG)
 ENDIF (${CMAKE_BUILD_TYPE} STREQUAL Debug)
 

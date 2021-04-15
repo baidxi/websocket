@@ -112,9 +112,6 @@ static void websocket_service_thread(void *args)
                     }
                     curr = next;
 
-                    if (curr == NULL)
-                        curr = wss->wsc;
-
                     if (next)
                         next = curr->next;
                 }
@@ -124,13 +121,13 @@ static void websocket_service_thread(void *args)
 }
 
 
-static int response_client(int fd, const char *key)
+static int response_client(struct websocket_client *wsc, const char *key)
 {
     char respondpkg[1024] = {0};
 
     build_http_respond(key, strlen(key), respondpkg);
 
-    return send(fd, respondpkg, strlen(respondpkg), 0);
+    return send(wsc->fd, respondpkg, strlen(respondpkg), 0);
 }
 
 static int websocket_client_add_to_tail(struct websocket_server *wss, struct websocket_client *wsc)
@@ -172,6 +169,8 @@ static int websocket_client_add_to_tail(struct websocket_server *wss, struct web
                 }
             }
         }
+	if (next_svr)
+	    cur_svr = next_svr;
     }
 
 out:
@@ -206,11 +205,13 @@ static int isValid_request(struct websocket_server *wss, struct http_hdr *hdr)
     if (strcmp(hdr->upgrade, "websocket"))
         return -1;
 
-    if (atoi(hdr->wsc->ver) < 13)
+    if (atoi(hdr->wsc->ver) < 13){
         return -1;
+    }
 
-    if (strcmp(wss->path, hdr->wsc->path))
+    if (strcmp(wss->path, hdr->wsc->path)){
         return -1;
+    }
 
     return 0;
 }
@@ -243,7 +244,15 @@ int websocket_add_client(struct websocket_server *wss, int fd)
     wsc->hdr = http->wsc;
     wsc->fd = fd;
 
-    response_client(wsc->fd, http->wsc->key);
+    if (response_client(wsc, http->wsc->key) < 0)
+    {
+	 pr_err("response failed:%s\n", strerror(errno));
+	 free(http->wsc);
+	 free(http);
+	 free(wsc);
+	 close(fd);
+	 return -1;
+    }
     wsc->isLogin = true;
     wsc->Online = true;
     wsc->exitType = WET_NONE;
@@ -261,7 +270,6 @@ static int websocket_start(struct websocket_server *wss, int load)
     if (!wss)
         return -1;
     wss->load = load;
-    pr_info("websocket start path:%s load %d\n", wss->path, load);
     return new_thread(wss, &websocket_service_thread);
 }
 
@@ -284,6 +292,7 @@ static int websocket_client_recv(struct websocket_client *wsc)
     ssize_t  retlen;
 
     n = recv(wsc->fd, buf, RECV_PKG_MAX, MSG_NOSIGNAL);
+
 
     if (n > 0) {
         char msg[RECV_PKG_MAX] = {0};
@@ -386,12 +395,13 @@ int websocket_client_send(struct websocket_client *wsc, char *data, ssize_t len,
 }
 int __attribute__((weak)) OnLogin(struct websocket_client *wsc)
 {
+    pr_info("login\n");
     return 0;
 }
 
 int __attribute__((weak)) OnMessage(struct websocket_client *wsc, const uint8_t *data, ssize_t len, websocket_data_type type)
 {
-  //  wsc->send(wsc, data, len, 0, type);
+    wsc->send(wsc, data, len, 0, type);
 
     if (type == WDT_TXTDATA) {
         pr_info("recv:%s\n", data);
@@ -415,6 +425,8 @@ int __attribute__((weak)) OnMessage(struct websocket_client *wsc, const uint8_t 
                 params = json_object_get_string(jparams);
 
             wsc->ubus->call(wsc->ubus, sid, scope, func, method, params);
+
+	    json_object_put(obj);
 
         } else {
             return -1;

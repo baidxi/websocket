@@ -69,7 +69,7 @@ struct socket_server *new_socket(const char *ip, uint16_t port)
     fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
         pr_err("create socket failed:%s\n", strerror(errno));
-        return -1;
+        return NULL;
     }
 
     ret = fcntl(fd, F_GETFL, 0);
@@ -79,7 +79,7 @@ struct socket_server *new_socket(const char *ip, uint16_t port)
 
     if (bind(fd, (struct sockaddr *)&addr, len) < 0) {
         pr_err("bind socket failed:%s\n", strerror(errno));
-        return -1;
+        return NULL;
     }
 
     server = malloc(sizeof(struct socket_server));

@@ -4,9 +4,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
+
 #include "http_parser.h"
 #include "websocket.h"
-#include <time.h>
+#include "common.h"
 
 static int get_option_value(char *dest, const char *src, const char *opt, char needle)
 {
@@ -65,7 +67,7 @@ struct http_hdr *http_parse_request(struct http_hdr *hdr, const char *buf, int l
     }
     if (hdr->wsc)
         get_option_value(hdr->version, buf, hdr->wsc->path, '\r');
-
+    
     return hdr;
 }
 

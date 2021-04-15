@@ -162,7 +162,7 @@ int ubus_call(struct ubus *bus, const char *sid, const char *scope, const char *
         json_object_object_add(ret, "ret", val);
         const char *str = json_object_to_json_string(ret);
         bus->wsc->send(bus->wsc, str, strlen(str), 0, WDT_TXTDATA); 
-        json_object_put(obj);
+        json_object_put(ret);
         return -1;
     }
 
@@ -173,7 +173,7 @@ int ubus_call(struct ubus *bus, const char *sid, const char *scope, const char *
         json_object_object_add(ret, "ret", val);
         const char *str = json_object_to_json_string(ret);
         bus->wsc->send(bus->wsc, str, strlen(str), 0, WDT_TXTDATA);
-        json_object_put(obj);
+        json_object_put(ret);
         return -1;
     }
 
