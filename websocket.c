@@ -12,7 +12,6 @@
 #include "http_parser.h"
 #include "base64.h"
 #include "common.h"
-#include "hexdump.h"
 #include "package.h"
 
 
@@ -197,21 +196,31 @@ static int websocket_waitdata(int fd)
 
 }
 
-static int isValid_request(struct websocket_server *wss, struct http_hdr *hdr)
+static struct websocket_server *isValid_request(struct websocket_server *wss, struct http_hdr *hdr)
 {
+    struct websocket_server *cur = wss;
+    struct websocket_server *next = cur->next;
     if (strcmp(hdr->connection, "Upgrade"))
-        return -1;
+        return NULL;
 
     if (strcmp(hdr->upgrade, "websocket"))
-        return -1;
+        return NULL;
 
     if (atoi(hdr->wsc->ver) < 13)
-        return -1;
+        return NULL;
 
-    if (strcmp(wss->path, hdr->wsc->path))
-        return -1;
-
-    return 0;
+    while(cur != NULL)
+    {
+        if (strcmp(cur->path, hdr->wsc->path))
+        {
+            cur = next;
+            if (next)
+                next = cur->next;
+        } else {
+            return cur;
+        } 
+    }
+    return NULL;
 }
 
 int websocket_add_client(struct websocket_server *wss, int fd)
@@ -219,6 +228,7 @@ int websocket_add_client(struct websocket_server *wss, int fd)
     char buf[1024] = {0};
     struct http_hdr *http;
     int n = 0;
+    struct websocket_server *svr = NULL;
 
     if (websocket_waitdata(fd) == 0) {
         pr_err("timeout\n");
@@ -230,7 +240,7 @@ int websocket_add_client(struct websocket_server *wss, int fd)
 
     http = http_parse_request(NULL, buf, n);
 
-    if (isValid_request(wss, http) < 0) {
+    if ((svr = isValid_request(wss, http)) < 0) {
         free(http->wsc);
         free(http);
         close(fd);
@@ -249,7 +259,7 @@ int websocket_add_client(struct websocket_server *wss, int fd)
     if (wsc->OnLogin)
         wsc->OnLogin(wsc);
 
-    websocket_client_add_to_tail(wss, wsc);
+    websocket_client_add_to_tail(svr, wsc);
 
     return 0;
 }

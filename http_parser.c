@@ -48,7 +48,6 @@ struct http_hdr *http_parse_request(struct http_hdr *hdr, const char *buf, int l
 
     get_option_value(hdr->method, buf, NULL, 0x20);
     get_option_value(hdr->path, buf+strlen(hdr->method)+1, NULL, 0x20);
-    get_option_value(hdr->version, buf, "/ws ", '\r');
     get_option_value(hdr->connection, buf, "Connection: ", '\r');
     if (!strcmp(hdr->connection, "Upgrade"))
     {
@@ -64,6 +63,8 @@ struct http_hdr *http_parse_request(struct http_hdr *hdr, const char *buf, int l
             }
         }
     }
+    if (hdr->wsc)
+        get_option_value(hdr->version, buf, hdr->wsc->path, '\r');
 
     return hdr;
 }

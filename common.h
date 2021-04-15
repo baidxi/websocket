@@ -40,6 +40,13 @@ do{ \
         fprintf(stderr, fmt, ##__VA_ARGS__); \
     }while(0)
 
+struct config {
+    const char *addr;
+    uint16_t port;
+    const char **path;
+    int n;
+};
+
 int new_thread(void *args, void *thread_cb);
 void _epoll_ctrl(int fd_epoll, int fd, uint32_t event, int ctrl, void *ptr);
 
