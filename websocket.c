@@ -92,24 +92,28 @@ static void websocket_service_thread(void *args)
     struct websocket_client *curr = NULL;
     struct websocket_client *next = NULL;
     wss->tid = pthread_self();
-    while(!wss->count) {
 
+    while(!wss->count) {
+        websocket_delayms(5000);
     }
-    curr = wss->wsc;
-    next = curr->next;
+    
     int nfds, i;
     struct epoll_event events[MAX_CLIENT];
     wss->running = true;
 
     while(wss->running) {
-        nfds = epoll_wait(wss->fd_epoll, events, MAX_CLIENT, -1);
-        if (nfds >= 0) {
+        nfds = epoll_wait(wss->fd_epoll, events, MAX_CLIENT, 500);
+        curr = wss->wsc;
+        if (curr)
+            next = curr->next;
+        if (nfds >= 0) { 
             for (i = 0; i < nfds; i++) {
                 while(curr != NULL) {
+                    pr_debug("have msg\n");
                     if (events[i].data.fd == curr->fd) {
                         curr->recv(curr);
                         break;
-                    }
+                    }        
                     curr = next;
 
                     if (next)
@@ -243,6 +247,7 @@ int websocket_add_client(struct websocket_server *wss, int fd)
     struct websocket_client *wsc =new_client();
     wsc->hdr = http->wsc;
     wsc->fd = fd;
+    wsc->next = NULL;
 
     if (response_client(wsc, http->wsc->key) < 0)
     {
@@ -395,42 +400,47 @@ int websocket_client_send(struct websocket_client *wsc, char *data, ssize_t len,
 }
 int __attribute__((weak)) OnLogin(struct websocket_client *wsc)
 {
-    pr_info("login\n");
+    pr_debug("login\n");
     return 0;
 }
 
 int __attribute__((weak)) OnMessage(struct websocket_client *wsc, const uint8_t *data, ssize_t len, websocket_data_type type)
 {
-    wsc->send(wsc, data, len, 0, type);
-
+   // wsc->send(wsc, data, len, 0, type);
+    int ret = 0;
     if (type == WDT_TXTDATA) {
-        pr_info("recv:%s\n", data);
-        json_object *obj = json_tokener_parse(data);
-        if (obj) {
-            json_object *jsid = json_object_object_get(obj, "sid");
-            json_object *jmethod = json_object_object_get(obj, "method");
-            json_object *jfunc = json_object_object_get(obj, "func");
-            json_object *jscope = json_object_object_get(obj, "scope");
-            json_object *jparams = json_object_object_get(obj, "params");
+        pr_debug("recv:\n%s\n", data);
+        json_object *msg = json_tokener_parse(data);
 
-            if (!jsid && !jmethod && !jfunc && !jscope)
-                return -1;
+       
+        // json_object *msg = json_tokener_parse(data);
+        // if (msg) {
+        //     json_object *jsid = json_object_object_get(msg, "sid");
+        //     json_object *jobj = json_object_object_get(msg, "obj");
+        //     json_object *jfunc = json_object_object_get(msg, "func");
+        //     json_object *jscope = json_object_object_get(msg, "scope");
+        //     json_object *jparams = json_object_object_get(msg, "params");
 
-            const char *params = NULL;
-            const char *sid = json_object_get_string(jsid);
-            const char *method = json_object_get_string(jmethod);
-            const char *func = json_object_get_string(jfunc);
-            const char *scope = json_object_get_string(jscope);
-            if (jparams)
-                params = json_object_get_string(jparams);
+        //     if (!jsid && !jobj && !jfunc && !jscope) {
+        //         json_object_put(msg);
+        //         return -1;
+        //     }
 
-            wsc->ubus->call(wsc->ubus, sid, scope, func, method, params);
+        //     const char *params = NULL;
+        //     const char *sid = json_object_get_string(jsid);
+        //     const char *obj = json_object_get_string(jobj);
+        //     const char *func = json_object_get_string(jfunc);
+        //     const char *scope = json_object_get_string(jscope);
+        //     if (jparams)
+        //         params = json_object_get_string(jparams);
 
-	    json_object_put(obj);
+        //     ret = wsc->ubus->call(wsc->ubus, sid, scope, obj, func, params);
 
-        } else {
-            return -1;
-        }
+	    //     json_object_put(msg);
+
+        // } else {
+        //     return -1;
+        // }
     }
 
     free(wsc->msg->data);
@@ -457,6 +467,7 @@ int detect_client(struct websocket_server *wss)
 {
     struct websocket_client *curr_client = NULL;
     struct websocket_client *next_client = NULL;
+    struct websocket_client *prev_client = NULL;
     struct websocket_server *curr_wss = NULL;
     struct websocket_server *next_wss = NULL;
     int i;
@@ -464,15 +475,15 @@ int detect_client(struct websocket_server *wss)
     while (1)
     {
         next_wss = curr_wss->next;
+        websocket_delayms(500);
         if (curr_wss) {
             if (curr_wss->running) {
                 if (curr_wss->count > 0) {
                     curr_client = curr_wss->wsc;
-                    for (i = 0; i < curr_wss->count; i++) {
+                    while(curr_client != NULL) {
                         next_client = curr_client->next;
                         if (curr_client->Online) {
                             if (curr_client->exitType != WET_NONE) {
-                                curr_wss->wsc = next_client;
                                 curr_client->Online = false;
                                 curr_client->isLogin = false;
                                 _epoll_ctrl(curr_wss->fd_epoll, curr_client->fd, 0, EPOLL_CTL_DEL, curr_client);
@@ -482,11 +493,16 @@ int detect_client(struct websocket_server *wss)
                                 curr_wss->count -= 1;
                                 close(curr_client->fd);
                                 free(curr_client);
+                                if (prev_client)
+                                    prev_client->next = next_client;
+                                else
+                                    curr_wss->wsc = next_client;
                             }
                         }
                         if (next_client) {
+                            prev_client = curr_client;
                             curr_client = next_client;
-                        }
+                        }    
                     }
                 }
             }

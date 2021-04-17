@@ -89,7 +89,7 @@ int main(int argc, char **argv) {
 
     
 
-    pr_info("socket create ok\n");
+    pr_debug("socket create ok\n");
 
 
     if (sock)

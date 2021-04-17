@@ -27,7 +27,7 @@ static void socket_server(void *args)
     _epoll_ctrl(svr->epoll_fd, svr->fd, EPOLLIN, EPOLL_CTL_ADD, NULL);
 
     while(1) {
-        n = epoll_wait(svr->epoll_fd, events, MAX_CLIENT, -1);
+        n = epoll_wait(svr->epoll_fd, events, MAX_CLIENT, 500);
         if (n >= 0) {
             for (int i = 0; i < n; i++)
             {

@@ -65,78 +65,6 @@ out:
 
 }
 
-// enum {
-//     UBUS_MSG_SID,
-//     UBUS_MSG_SCOPE,
-//     UBUS_MSG_METHOD,
-//     UBUS_MSG_FUNC,
-//     UBUS_MSG_PARAM,
-//     __UBUS_MSG_MAX,
-// };
-
-// static const struct blobmsg_policy ubus_msg_policy[__UBUS_MSG_MAX] = {
-//     [UBUS_MSG_SID] = {
-//         .name = "sid",
-//         .type = BLOBMSG_TYPE_STRING
-//     },
-//     [UBUS_MSG_SCOPE] = {
-//         .name = "scope",
-//         .type = BLOBMSG_TYPE_STRING
-//     },
-//     [UBUS_MSG_METHOD] = {
-//         .name = "method",
-//         .type = BLOBMSG_TYPE_STRING
-//     },
-//     [UBUS_MSG_FUNC] = {
-//         .name = "func",
-//         .type = BLOBMSG_TYPE_STRING
-//     },
-//     [UBUS_MSG_PARAM] = {
-//         .name = "param",
-//         .type = BLOBMSG_TYPE_TABLE
-//     }
-// };
-
-// int ubus_process(struct blob_attr *msg)
-// {
-//     struct blob_attr *param;
-//     struct blob_attr *tb[__UBUS_MSG_MAX];
-
-//     const char *scope;
-//     const char *method;
-//     const char *func;
-//     const char *sid;
-
-//     uint32_t id;
-//     bool allow = false;
-
-//     blobmsg_parse(ubus_msg_policy, __UBUS_MSG_MAX, tb, blob_data(msg), blob_len(msg));
-
-//     if (!tb[UBUS_MSG_SCOPE] || !tb[UBUS_MSG_METHOD] || !tb[UBUS_MSG_FUNC] || !tb[UBUS_MSG_PARAM] || !tb[UBUS_MSG_SID]) {
-//         pr_err("invalid argument\n");
-//         return UBUS_STATUS_INVALID_ARGUMENT;
-//     }
-
-//     sid = blobmsg_get_string(tb[UBUS_MSG_SID]);
-//     scope = blobmsg_get_string(tb[UBUS_MSG_SCOPE]);
-//     method = blobmsg_get_string(tb[UBUS_MSG_METHOD]);
-//     func = blobmsg_get_string(tb[UBUS_MSG_FUNC]);
-//     param = blobmsg_data(tb[UBUS_MSG_PARAM]);
-
-//     if (UBUS_STATUS_OK != ubus_lookup_id(ctx, method, &id))
-//     {
-//         pr_err("method not found\n");
-//         return UBUS_STATUS_METHOD_NOT_FOUND;
-//     }
-
-//     if (!(allow = session_access(sid, scope, method, func))) {
-//         pr_err("Access denied\n");
-//         return UBUS_STATUS_PERMISSION_DENIED;
-//     }
-
-//     return ubus_invoke(ctx, id, func, param, session_access_cb, &allow, 500);
-// }
-
 static void ubus_call_cb(struct ubus_request *req, int type, struct blob_attr *msg)
 {
     struct websocket_client *wsc = req->priv;
@@ -149,13 +77,13 @@ static void ubus_call_cb(struct ubus_request *req, int type, struct blob_attr *m
         wsc->send(wsc, ret, strlen(ret), 0, WDT_TXTDATA);
 }
 
-int ubus_call(struct ubus *bus, const char *sid, const char *scope, const char *obj, const char *method, const char *params)
+int ubus_call(struct ubus *bus, const char *sid, const char *scope, const char *obj, const char *func, const char *params)
 {
     uint32_t id;
     bool allow = false;
     static struct blob_buf buf;
-    
-    if (UBUS_STATUS_OK != ubus_lookup_id(bus->ctx, method, &id))
+
+    if (UBUS_STATUS_OK != ubus_lookup_id(bus->ctx, obj, &id))
     {
         json_object *ret = json_object_new_object();
         json_object *val = json_object_new_int(UBUS_STATUS_METHOD_NOT_FOUND);
@@ -166,7 +94,7 @@ int ubus_call(struct ubus *bus, const char *sid, const char *scope, const char *
         return -1;
     }
 
-    if (!(allow = session_access(bus->ctx, scope, obj, method)))
+    if (!(allow = session_access(bus->ctx, scope, obj, func)))
     {
         json_object *ret = json_object_new_object();
         json_object *val = json_object_new_int(UBUS_STATUS_PERMISSION_DENIED);
@@ -177,9 +105,10 @@ int ubus_call(struct ubus *bus, const char *sid, const char *scope, const char *
         return -1;
     }
 
+
     blob_buf_init(&buf, 0);
     blobmsg_add_json_from_string(&buf, params);
-    return ubus_invoke(bus->ctx, id, method, buf.head, ubus_call_cb, bus->wsc, 500);
+    return ubus_invoke(bus->ctx, id, func, buf.head, ubus_call_cb, bus->wsc, 500);
 }
 
 struct ubus *new_ubus(struct websocket_client *wsc)
