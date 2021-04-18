@@ -76,7 +76,7 @@ int ubus_call(struct ubus *bus, const char *sid, const char *scope, const char *
     static struct blob_buf buf;
 
     if (ubus_lookup_id(bus->ctx, obj, &id))
-        return UBUS_STATUS_NOT_FOUND;
+        return response_msg(bus->wsc, -1, "function not found");
 
     if (!session_access(bus->ctx, sid, obj, func))
     {
