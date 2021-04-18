@@ -30,7 +30,7 @@ static void session_access_cb(struct ubus_request *req, int type, struct blob_at
     struct blob_attr *tb[__SES_MAX];
     bool *allow = (bool *)req->priv;
 
-    if (!msg)
+    if (!msg) 
         return ;
 
     blobmsg_parse(ses_policy, __SES_MAX, tb, blob_data(msg), blob_len(msg));
@@ -61,8 +61,9 @@ static bool session_access(struct ubus_context *ctx, const char *sid, const char
 static void ubus_call_cb(struct ubus_request *req, int type, struct blob_attr *msg)
 {
     struct websocket_client *wsc = req->priv;
-    if (!msg)
-        return;
+    if (!msg) {
+        return response_msg(wsc, 0, "Success");
+    }
 
     const char *ret = blobmsg_format_json(msg, true);
     pr_debug("\nret=%s\n", ret);
