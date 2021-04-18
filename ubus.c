@@ -39,30 +39,23 @@ static void session_access_cb(struct ubus_request *req, int type, struct blob_at
         *allow = blobmsg_get_bool(tb[SES_ACCESS]);
 }
 
-static bool session_access(const char *sid, const char *scope, const char *obj, const char *func)
+static bool session_access(struct ubus_context *ctx, const char *sid, const char *obj, const char *func)
 {
     uint32_t id;
-    bool allow = false;
-    static struct blob_buf req;
+    bool     allow = false;
+    static   struct blob_buf req;
 
-    ctx = ubus_connect(NULL);
-
-    if (!ctx || !obj || ubus_lookup_id(ctx, "session", &id))
-        goto out;
-
+    if (ubus_lookup_id(ctx, "session", &id))
+        return false;
 
     blob_buf_init(&req, 0);
     blobmsg_add_string(&req, "ubus_rpc_session", sid);
-    blobmsg_add_string(&req, "scope", scope);
     blobmsg_add_string(&req, "object", obj);
     blobmsg_add_string(&req, "function", func);
 
     ubus_invoke(ctx, id, "access", req.head, session_access_cb, &allow, 500);
 
-out:
-
     return allow;
-
 }
 
 static void ubus_call_cb(struct ubus_request *req, int type, struct blob_attr *msg)
@@ -71,43 +64,32 @@ static void ubus_call_cb(struct ubus_request *req, int type, struct blob_attr *m
     if (!msg)
         return;
 
-    const char *ret = blobmsg_format_json(msg, 0);
-
+    const char *ret = blobmsg_format_json(msg, true);
+    pr_debug("\nret=%s\n", ret);
     if (ret)
-        wsc->send(wsc, ret, strlen(ret), 0, WDT_TXTDATA);
+        response_msg(wsc, 0, ret);
 }
 
-int ubus_call(struct ubus *bus, const char *sid, const char *scope, const char *obj, const char *func, const char *params)
+int ubus_call(struct ubus *bus, const char *sid, const char *scope, const char *obj, const char *func, json_object *params)
 {
     uint32_t id;
-    bool allow = false;
     static struct blob_buf buf;
 
-    if (UBUS_STATUS_OK != ubus_lookup_id(bus->ctx, obj, &id))
+    if (ubus_lookup_id(bus->ctx, obj, &id))
+        return UBUS_STATUS_NOT_FOUND;
+
+    if (!session_access(bus->ctx, sid, obj, func))
     {
-        json_object *ret = json_object_new_object();
-        json_object *val = json_object_new_int(UBUS_STATUS_METHOD_NOT_FOUND);
-        json_object_object_add(ret, "ret", val);
-        const char *str = json_object_to_json_string(ret);
-        bus->wsc->send(bus->wsc, str, strlen(str), 0, WDT_TXTDATA); 
-        json_object_put(ret);
-        return -1;
+        return response_msg(bus->wsc, -1, "Access denied");
     }
 
-    if (!(allow = session_access(bus->ctx, scope, obj, func)))
-    {
-        json_object *ret = json_object_new_object();
-        json_object *val = json_object_new_int(UBUS_STATUS_PERMISSION_DENIED);
-        json_object_object_add(ret, "ret", val);
-        const char *str = json_object_to_json_string(ret);
-        bus->wsc->send(bus->wsc, str, strlen(str), 0, WDT_TXTDATA);
-        json_object_put(ret);
-        return -1;
-    }
-
+    pr_debug("access %s %s scope=%s\n", obj, func, scope);
 
     blob_buf_init(&buf, 0);
-    blobmsg_add_json_from_string(&buf, params);
+
+    if (params)
+        blobmsg_add_object(&buf, params);
+
     return ubus_invoke(bus->ctx, id, func, buf.head, ubus_call_cb, bus->wsc, 500);
 }
 

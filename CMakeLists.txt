@@ -2,6 +2,15 @@ cmake_minimum_required(VERSION 3.17)
 project(websocket_svr C)
 
 set(CMAKE_C_STANDARD 11)
+
+include(FindPkgConfig)
+
+pkg_check_modules (JSON_C REQUIRED json-c)
+
+link_libraries(${JSON_C_LIBRARYS} ${JSON_C_LIBRARYS})
+include_directories(${JSON_C_INCLUDE_DIRS} ${JSON_C_INCLUDE_DIRS})
+
+
 link_libraries("pthread.so")
 link_libraries("ssl.so")
 link_libraries("crypto.so")

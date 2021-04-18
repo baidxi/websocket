@@ -6,6 +6,8 @@
 #include <errno.h>
 #include <stdint.h>
 #include <sys/epoll.h>
+#include <json.h>
+#include "websocket.h"
 #include "common.h"
 
 int new_thread(void *args, void *thread_cb)
@@ -34,4 +36,19 @@ void _epoll_ctrl(int fd_epoll, int fd, uint32_t event, int ctrl, void *ptr)
         ev.data.fd = fd;
     if (epoll_ctl(fd_epoll, ctrl, fd, &ev) != 0)
         pr_err("epoll ctrl %d error !!\r\n", ctrl);
+}
+
+
+int response_msg(struct websocket_client *wsc, int value, const char *str)
+{
+    int len;
+    json_object *req = json_object_new_object();
+    json_object *val = json_object_new_int(value);
+    json_object *msg = json_object_new_string(str);
+    json_object_object_add(req, "value", val);
+    json_object_object_add(req, "msg", msg);
+
+    const char *ret = json_object_to_json_string_length(req, NULL, &len);
+
+    return wsc->send(wsc, ret, len, 0, WDT_TXTDATA);
 }

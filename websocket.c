@@ -15,6 +15,7 @@
 #include "common.h"
 #include "package.h"
 #include "ubus.h"
+#include "hexdump.h"
 
 void websocket_delayus(unsigned int us)
 {
@@ -89,8 +90,6 @@ static int remove_client(struct websocket_client *wsc)
 static void websocket_service_thread(void *args)
 {
     struct websocket_server *wss = args;
-    struct websocket_client *curr = NULL;
-    struct websocket_client *next = NULL;
     wss->tid = pthread_self();
 
     while(!wss->count) {
@@ -103,22 +102,10 @@ static void websocket_service_thread(void *args)
 
     while(wss->running) {
         nfds = epoll_wait(wss->fd_epoll, events, MAX_CLIENT, 500);
-        curr = wss->wsc;
-        if (curr)
-            next = curr->next;
-        if (nfds >= 0) { 
+        if (nfds >= 0) {
             for (i = 0; i < nfds; i++) {
-                while(curr != NULL) {
-                    pr_debug("have msg\n");
-                    if (events[i].data.fd == curr->fd) {
-                        curr->recv(curr);
-                        break;
-                    }        
-                    curr = next;
-
-                    if (next)
-                        next = curr->next;
-                }
+                struct websocket_client *wsc = events[i].data.ptr;
+                wsc->recv(wsc);
             }
         }
     }
@@ -178,7 +165,7 @@ static int websocket_client_add_to_tail(struct websocket_server *wss, struct web
     }
 
 out:
-    _epoll_ctrl(cur_svr->fd_epoll, wsc->fd, EPOLLET | EPOLLIN, EPOLL_CTL_ADD, NULL);
+    _epoll_ctrl(cur_svr->fd_epoll, wsc->fd, EPOLLET | EPOLLIN, EPOLL_CTL_ADD, wsc);
     return 0;
 
 }
@@ -296,9 +283,12 @@ static int websocket_client_recv(struct websocket_client *wsc)
     uint32_t timeout = 0;
     ssize_t  retlen;
 
+    pr_debug("recv msg\n");
     n = recv(wsc->fd, buf, RECV_PKG_MAX, MSG_NOSIGNAL);
 
-
+#ifdef DEBUG
+    hexdump(buf, n);
+#endif
     if (n > 0) {
         char msg[RECV_PKG_MAX] = {0};
 
@@ -406,41 +396,30 @@ int __attribute__((weak)) OnLogin(struct websocket_client *wsc)
 
 int __attribute__((weak)) OnMessage(struct websocket_client *wsc, const uint8_t *data, ssize_t len, websocket_data_type type)
 {
-   // wsc->send(wsc, data, len, 0, type);
     int ret = 0;
     if (type == WDT_TXTDATA) {
-        pr_debug("recv:\n%s\n", data);
-        json_object *msg = json_tokener_parse(data);
+        if (len) {
+            pr_debug("recved msg:%s\n", data);
+            while(1) {
+                wsc->ubus->jtok = json_tokener_new();
+                json_object *msg = json_tokener_parse_ex(wsc->ubus->jtok, data, len);
+                const char *sid = json_object_get_string(json_object_object_get(msg, "sid"));
+                const char *obj = json_object_get_string(json_object_object_get(msg, "obj"));
+                const char *func = json_object_get_string(json_object_object_get(msg, "func"));
+                const char *scope = json_object_get_string(json_object_object_get(msg, "scope"));
+                json_object *params = json_object_object_get(msg, "params");
 
-       
-        // json_object *msg = json_tokener_parse(data);
-        // if (msg) {
-        //     json_object *jsid = json_object_object_get(msg, "sid");
-        //     json_object *jobj = json_object_object_get(msg, "obj");
-        //     json_object *jfunc = json_object_object_get(msg, "func");
-        //     json_object *jscope = json_object_object_get(msg, "scope");
-        //     json_object *jparams = json_object_object_get(msg, "params");
-
-        //     if (!jsid && !jobj && !jfunc && !jscope) {
-        //         json_object_put(msg);
-        //         return -1;
-        //     }
-
-        //     const char *params = NULL;
-        //     const char *sid = json_object_get_string(jsid);
-        //     const char *obj = json_object_get_string(jobj);
-        //     const char *func = json_object_get_string(jfunc);
-        //     const char *scope = json_object_get_string(jscope);
-        //     if (jparams)
-        //         params = json_object_get_string(jparams);
-
-        //     ret = wsc->ubus->call(wsc->ubus, sid, scope, obj, func, params);
-
-	    //     json_object_put(msg);
-
-        // } else {
-        //     return -1;
-        // }
+                if (!sid && !obj && !func && !scope)
+                {
+                    response_msg(wsc, -1, "invalid argument");
+                } else {
+                    ret = wsc->ubus->call(wsc->ubus, sid, scope, obj, func, params);
+                }
+                json_object_put(msg);
+                json_tokener_free(wsc->ubus->jtok);
+                break;
+            }
+        }
     }
 
     free(wsc->msg->data);
