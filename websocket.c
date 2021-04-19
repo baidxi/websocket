@@ -93,7 +93,7 @@ static void websocket_service_thread(void *args)
     wss->tid = pthread_self();
 
     while(!wss->count) {
-        websocket_delayms(5000);
+        websocket_delayms(100);
     }
     
     int nfds, i;
@@ -414,6 +414,8 @@ int __attribute__((weak)) OnMessage(struct websocket_client *wsc, const uint8_t 
                     response_msg(wsc, -1, "invalid argument");
                 } else {
                     ret = wsc->ubus->call(wsc->ubus, sid, scope, obj, func, params);
+                    if (ret)
+                        response_msg(wsc, ret, NULL);
                 }
                 json_object_put(msg);
                 json_tokener_free(wsc->ubus->jtok);
