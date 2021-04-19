@@ -9,6 +9,8 @@
 #include <openssl/sha.h>
 #include <sys/epoll.h>
 #include <sys/select.h>
+#include <time.h>
+#include <locale.h>
 #include <json-c/json.h>
 #include "http_parser.h"
 #include "base64.h"
@@ -46,6 +48,18 @@ char *getrandomstring(ssize_t len)
     }
 
     return str;
+}
+
+static int response_ping(char *out) {
+    time_t now;
+    time(&now);
+    int ret;
+
+    struct tm *tm = localtime(&now);
+
+    ret = sprintf(out, "%04d-%02d-%02d %02d:%02d:%02d", tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
+
+    return ret;
 }
 
 int buildshakekey(char *key)
@@ -93,7 +107,7 @@ static void websocket_service_thread(void *args)
     wss->tid = pthread_self();
 
     while(!wss->count) {
-        websocket_delayms(5000);
+        websocket_delayms(100);
     }
     
     int nfds, i;
@@ -221,6 +235,11 @@ int websocket_add_client(struct websocket_server *wss, int fd)
 
     n = recv(fd, buf, sizeof(buf), MSG_NOSIGNAL);
 
+    if (n < 0) {
+        if (errno == EBADFD)
+            return -1;
+    }
+
     http = http_parse_request(NULL, buf, n);
 
     if (isValid_request(wss, http) < 0) {
@@ -330,6 +349,12 @@ static int websocket_client_recv(struct websocket_client *wsc)
             if (retlen > 0) {
                 switch (wsc->msg->type) {
                     case WDT_PING:
+                        {
+                            char buf[1024] = {0};
+                            int len = response_ping(buf);
+                            wsc->loginTimeout = 300;
+                            wsc->send(wsc, buf, len, 0, WDT_PONG);
+                        }
                         break;
                     case WDT_PONG:
                         break;
@@ -342,6 +367,11 @@ static int websocket_client_recv(struct websocket_client *wsc)
             } else
                 ret = -retlen;
         }
+    } else {
+        if (errno == EBADFD) {
+            remove_client(wsc);
+            return 0;
+        }       
     }
 
     if (wsc->msg) {
@@ -358,7 +388,7 @@ static int websocket_client_recv(struct websocket_client *wsc)
         wsc->recvBytes += ret > 0 ? ret : (-ret);
 
     if (wsc->OnMessage)
-        wsc->OnMessage(wsc, wsc->msg->data, wsc->msg->len, wsc->msg->type);
+        wsc->OnMessage(wsc, wsc->msg);
 
     return ret;
 }
@@ -394,36 +424,45 @@ int __attribute__((weak)) OnLogin(struct websocket_client *wsc)
     return 0;
 }
 
-int __attribute__((weak)) OnMessage(struct websocket_client *wsc, const uint8_t *data, ssize_t len, websocket_data_type type)
+static void ubus_process(struct websocket_client *wsc, struct websocket_message *msg)
 {
     int ret = 0;
-    if (type == WDT_TXTDATA) {
-        if (len) {
-            pr_debug("recved msg:%s\n", data);
-            while(1) {
-                wsc->ubus->jtok = json_tokener_new();
-                json_object *msg = json_tokener_parse_ex(wsc->ubus->jtok, data, len);
-                const char *sid = json_object_get_string(json_object_object_get(msg, "sid"));
-                const char *obj = json_object_get_string(json_object_object_get(msg, "obj"));
-                const char *func = json_object_get_string(json_object_object_get(msg, "func"));
-                const char *scope = json_object_get_string(json_object_object_get(msg, "scope"));
-                json_object *params = json_object_object_get(msg, "params");
+    while(1) {
+        wsc->ubus->jtok = json_tokener_new();
+        json_object *data = json_tokener_parse_ex(wsc->ubus->jtok, msg->data, msg->len);
+        if (!data)
+            break;
+        const char *sid = json_object_get_string(json_object_object_get(data, "sid"));
+        const char *obj = json_object_get_string(json_object_object_get(data, "obj"));
+        const char *func = json_object_get_string(json_object_object_get(data, "func"));
+        const char *scope = json_object_get_string(json_object_object_get(data, "scope"));
+        json_object *params = json_object_object_get(data, "params");
 
-                if (!sid && !obj && !func && !scope)
-                {
-                    response_msg(wsc, -1, "invalid argument");
-                } else {
-                    ret = wsc->ubus->call(wsc->ubus, sid, scope, obj, func, params);
-                }
-                json_object_put(msg);
-                json_tokener_free(wsc->ubus->jtok);
-                break;
-            }
+        if (!sid && !obj && !func && !scope)
+        {
+            response_msg(wsc, -1, "invalid argument");
+        } else {
+            ret = wsc->ubus->call(wsc->ubus, sid, scope, obj, func, params);
+        }
+        json_object_put(data);
+        json_tokener_free(wsc->ubus->jtok);
+        break;
+    }
+}
+
+int __attribute__((weak)) OnMessage(struct websocket_client *wsc, struct websocket_message *msg)
+{
+    int ret = 0;
+    if (msg->type == WDT_TXTDATA) {
+        if (msg->len) {
+            pr_debug("recved msg:%s\n", msg->data);
+            if (!strcmp(wsc->hdr->path, "/ubus"))
+                ubus_process(wsc, msg);
         }
     }
 
-    free(wsc->msg->data);
-    free(wsc->msg);
+    free(msg->data);
+    free(msg);
 }
 
 int __attribute__((weak)) OnExit(struct websocket_client *wsc)
@@ -449,6 +488,7 @@ int detect_client(struct websocket_server *wss)
     struct websocket_client *prev_client = NULL;
     struct websocket_server *curr_wss = NULL;
     struct websocket_server *next_wss = NULL;
+    static int timeout = 0;
     int i;
     curr_wss = wss;
     while (1)
@@ -477,6 +517,13 @@ int detect_client(struct websocket_server *wss)
                                 else
                                     curr_wss->wsc = next_client;
                             }
+                            timeout += 500;
+                            if (timeout == 1000) {
+                                curr_client->loginTimeout -= 1;
+                                if (curr_client->loginTimeout == 0)
+                                    curr_client->exitType = WET_LOGIN_TIMEOUT;
+                            }
+                                
                         }
                         if (next_client) {
                             prev_client = curr_client;

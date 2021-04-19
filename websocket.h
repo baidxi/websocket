@@ -92,7 +92,7 @@ struct websocket_client {
     struct websocket_message *msg;
     struct websocket_client *next;
     int (*OnLogin)(struct websocket_client *);
-    int (*OnMessage)(struct websocket_client *, const uint8_t *, ssize_t, websocket_data_type);
+    int (*OnMessage)(struct websocket_client *, struct websocket_message *msg);
     int (*OnExit)(struct websocket_client *);
     int (*recv)(struct websocket_client *);
     int (*send)(struct websocket_client *wsc, char *data, ssize_t len, bool mask, websocket_data_type type);
