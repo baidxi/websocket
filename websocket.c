@@ -443,6 +443,9 @@ static void ubus_process(struct websocket_client *wsc, struct websocket_message 
             response_msg(wsc, -1, "invalid argument");
         } else {
             ret = wsc->ubus->call(wsc->ubus, sid, scope, obj, func, params);
+            if (ret)
+                response_msg(wsc, ret, NULL);
+
         }
         json_object_put(data);
         json_tokener_free(wsc->ubus->jtok);
