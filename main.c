@@ -8,11 +8,14 @@
 #include "websocket.h"
 #include "common.h"
 
-int long_opt;
+#ifdef DEBUG
+#include <syslog.h>
+#endif
+
 struct option long_opts[] = {
-    {"ip", required_argument, &long_opt, 'i'},
-    {"port", required_argument, &long_opt, 'p'},
-    {"path", required_argument, &long_opt, 'P'},
+    {"ip", required_argument, NULL, 'i'},
+    {"port", required_argument, NULL, 'p'},
+    {"path", required_argument, NULL, 'P'},
     {0, 0, 0, 0},
 };
 
@@ -26,6 +29,7 @@ struct config *parse_args(int argc, char **argv)
     if (argc < 4) {
         return NULL;
     }
+    pr_debug("start parse args\n");
 
     conf = malloc(sizeof(struct config));
     memset (conf, 0, sizeof(struct config));
@@ -37,10 +41,10 @@ struct config *parse_args(int argc, char **argv)
             case 0:
                 switch(opt_idx)
                 {
-                    case 'i':
+                    case 0:
                         conf->addr = strdup(optarg);
                         break;
-                    case 'p':
+                    case 1:
                         if (atoi(optarg) > 0 && atoi(optarg) < 65535)
                             conf->port = atoi(optarg);
                         else {
@@ -48,7 +52,7 @@ struct config *parse_args(int argc, char **argv)
                             conf->port = 8088;
                         }
                         break;
-                    case 'P':
+                    case 2:
                         conf->path = strdup(optarg);
 
                         break;
@@ -76,35 +80,35 @@ struct config *parse_args(int argc, char **argv)
 
 int main(int argc, char **argv) {
     int i = 0;
+    pr_debug("starting websocket server\n");
+    
     struct config *conf = parse_args(argc, argv);
-    struct websocket_server *cur;
-    struct websocket_server *next;
+
     if (conf == NULL)
         return -1;
 
     struct socket_server *sock = new_socket(conf->addr, conf->port);
-
-    struct websocket_server *wss = new_weboskcet_server(conf->path);
-
-
-    
-
     pr_debug("socket create ok\n");
+    struct websocket_server *wss = new_weboskcet_server(conf->path);
+    pr_debug("websocket create ok\n");
 
-
-    if (sock)
-        sock->start(sock);
-
-    if (wss) {
-        sock->wss = wss;
-        sock->wss->start_svr(sock->wss, 1024);
+    if (!sock) {
+        pr_err("socket error\n");
+        return -1;
     }
 
+    sock->start(sock);
+
+    if (!wss) {
+        pr_err("wss failed\n");
+        return -1;
+    }
+
+    sock->wss = wss;
+    sock->wss->start_svr(sock->wss, 1024);
     websocket_delayms(1000);
 
-
     detect_client(sock->wss);
-
 
     return 0;
 }

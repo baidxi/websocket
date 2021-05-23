@@ -9,6 +9,7 @@
 #include "http_parser.h"
 #include "websocket.h"
 #include "common.h"
+#include "hexdump.h"
 
 static int get_option_value(char *dest, const char *src, const char *opt, char needle)
 {
@@ -47,11 +48,14 @@ struct http_hdr *http_parse_request(struct http_hdr *hdr, const char *buf, int l
         hdr = malloc(sizeof(struct http_hdr));
 
     memset(hdr, 0, sizeof(struct http_hdr));
-
+#ifdef DEBUG
+    hexdump(buf, len);
+#endif
     get_option_value(hdr->method, buf, NULL, 0x20);
     get_option_value(hdr->path, buf+strlen(hdr->method)+1, NULL, 0x20);
     get_option_value(hdr->connection, buf, "Connection: ", '\r');
-    if (!strcmp(hdr->connection, "Upgrade"))
+    pr_debug("connection = %s\n", hdr->connection);
+    if (strstr(hdr->connection, "Upgrade"))
     {
         get_option_value(hdr->upgrade, buf, "Upgrade: ", '\r');
         if (!strcmp(hdr->upgrade, "websocket")) {

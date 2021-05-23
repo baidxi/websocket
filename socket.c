@@ -26,13 +26,13 @@ static void socket_server(void *args)
     svr->epoll_fd = epoll_create(1024);
     _epoll_ctrl(svr->epoll_fd, svr->fd, EPOLLIN, EPOLL_CTL_ADD, NULL);
 
-    while(1) {
+    while(svr->epoll_fd) {
         n = epoll_wait(svr->epoll_fd, events, MAX_CLIENT, 500);
         if (n >= 0) {
             for (int i = 0; i < n; i++)
             {
                 if (events[i].data.fd == svr->fd) {
-                    int newfd = accept(svr->fd, &client_addr, &n);
+                    int newfd = accept(svr->fd, (struct sockaddr *)&client_addr, &n);
                     if (newfd >= 0) {
                         websocket_add_client(svr->wss, newfd);
                     }

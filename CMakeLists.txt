@@ -34,7 +34,7 @@ ENDIF (${CMAKE_BUILD_TYPE} STREQUAL Debug)
 # ENDIF(DEFINE_DEBUG)
 
 add_executable(websocket_svr main.c socket.c socket.h hexdump.c hexdump.h common.h websocket.c websocket.h common.c http_parser.c http_parser.h base64.c base64.h package.c package.h
-                ubus.c ubus.h)
+                ubus.c ubus.h backend.c backend.h hashmap.c hashmap.h)
 install(TARGETS websocket_svr
         RUNTIME DESTINATION usr/bin
         )

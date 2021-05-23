@@ -49,6 +49,7 @@ int websocket_unpackage(struct websocket_client *wsc, uint8_t *data, ssize_t len
             msg->type = WDT_PONG;
         default:
         {
+            pr_debug("unknow msg type\n");
             free(msg);
             return ret;
         }

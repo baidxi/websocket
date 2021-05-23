@@ -5,19 +5,22 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <string.h>
 #include <openssl/sha.h>
 #include <sys/epoll.h>
 #include <sys/select.h>
-#include <time.h>
-#include <locale.h>
-#include <json-c/json.h>
+#include <netinet/tcp.h>
+#include <netinet/in.h>
+#include <json.h>
 #include "http_parser.h"
 #include "base64.h"
 #include "common.h"
 #include "package.h"
 #include "ubus.h"
+#include "backend.h"
 #include "hexdump.h"
+#include "hashmap.h"
 
 void websocket_delayus(unsigned int us)
 {
@@ -48,18 +51,6 @@ char *getrandomstring(ssize_t len)
     }
 
     return str;
-}
-
-static int response_ping(char *out) {
-    time_t now;
-    time(&now);
-    int ret;
-
-    struct tm *tm = localtime(&now);
-
-    ret = sprintf(out, "%04d-%02d-%02d %02d:%02d:%02d", tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
-
-    return ret;
 }
 
 int buildshakekey(char *key)
@@ -135,51 +126,10 @@ static int response_client(struct websocket_client *wsc, const char *key)
     return send(wsc->fd, respondpkg, strlen(respondpkg), 0);
 }
 
-static int websocket_client_add_to_tail(struct websocket_server *wss, struct websocket_client *wsc)
+static int websocket_client_add_to_hashmap(struct websocket_server *wss, struct websocket_client *wsc)
 {
-    struct websocket_server *cur_svr = wss;
-    struct websocket_server *next_svr = NULL;
-    struct websocket_client *cur_client = cur_svr->wsc;
-    struct websocket_client *next_client = NULL;
-    while(cur_svr != NULL) {
-        next_svr = cur_svr->next;
-        if (cur_svr->count >= cur_svr->load) {
-            if (next_svr == NULL) {
-                struct websocket_server *ws = new_weboskcet_server(cur_svr->path);
-                ws->running = true;
-                cur_svr->next = ws;
-                ws->wsc = wsc;
-                cur_svr = ws;
-                wss->start_svr(ws, 1024);
-                wsc->tid = wss->tid;
-                goto out;
-            } else {
-                cur_svr = next_svr;
-            }
-        } else {
-            if (cur_client == NULL) {
-                cur_svr->wsc = wsc;
-                cur_svr->count += 1;
-                goto out;
-            } else {
-                while(cur_client != NULL) {
-                    next_client = cur_client->next;
-                    if (next_client == NULL) {
-                        cur_client->next = wsc;
-                        cur_svr->count += 1;
-                        goto out;
-                    } else {
-                        cur_client = next_client;
-                    }
-                }
-            }
-        }
-	if (next_svr)
-	    cur_svr = next_svr;
-    }
-
-out:
-    _epoll_ctrl(cur_svr->fd_epoll, wsc->fd, EPOLLET | EPOLLIN, EPOLL_CTL_ADD, wsc);
+    map_set(wss->map, wsc->hdr->key, wsc);
+    _epoll_ctrl(wss->fd_epoll, wsc->fd, EPOLLET | EPOLLIN, EPOLL_CTL_ADD, wsc);
     return 0;
 
 }
@@ -203,8 +153,9 @@ static int websocket_waitdata(int fd)
 
 static int isValid_request(struct websocket_server *wss, struct http_hdr *hdr)
 {
+    pr_debug("connection = %s upgrade = %s version = %s path = %s\n", hdr->connection, hdr->upgrade, hdr->wsc->ver, hdr->wsc->path);
 
-    if (strcmp(hdr->connection, "Upgrade"))
+    if (!strstr(hdr->connection, "Upgrade"))
         return -1;
 
     if (strcmp(hdr->upgrade, "websocket"))
@@ -215,6 +166,7 @@ static int isValid_request(struct websocket_server *wss, struct http_hdr *hdr)
     }
 
     if (strcmp(wss->path, hdr->wsc->path)){
+        pr_debug("path invalid: wss path = %s wsc path = %s\n", wss->path, hdr->wsc->path);
         return -1;
     }
 
@@ -227,6 +179,7 @@ int websocket_add_client(struct websocket_server *wss, int fd)
     struct http_hdr *http;
     int n = 0;
 
+    pr_debug("have new client connect\n");
     if (websocket_waitdata(fd) == 0) {
         pr_err("timeout\n");
         close(fd);
@@ -235,14 +188,10 @@ int websocket_add_client(struct websocket_server *wss, int fd)
 
     n = recv(fd, buf, sizeof(buf), MSG_NOSIGNAL);
 
-    if (n < 0) {
-        if (errno == EBADFD)
-            return -1;
-    }
-
     http = http_parse_request(NULL, buf, n);
 
     if (isValid_request(wss, http) < 0) {
+        pr_debug("invalid request\n");
         free(http->wsc);
         free(http);
         close(fd);
@@ -270,7 +219,7 @@ int websocket_add_client(struct websocket_server *wss, int fd)
     if (wsc->OnLogin)
         wsc->OnLogin(wsc);
 
-    websocket_client_add_to_tail(wss, wsc);
+    websocket_client_add_to_hashmap(wss, wsc);
 
     return 0;
 }
@@ -286,10 +235,25 @@ static int websocket_start(struct websocket_server *wss, int load)
 
 struct websocket_server *new_weboskcet_server(const char *path)
 {
+    pr_debug("create new websocket server\n");
     struct websocket_server *wss = malloc(sizeof(struct websocket_server));
+    if (!wss) {
+        pr_err("malloc wss failed:%s\n", strerror(errno));
+        return NULL;
+    }
+
+    if (!path) {
+        pr_err("path empty\n");
+        free(wss);
+        return NULL;
+    }
+
     strcpy(wss->path, path);
     wss->start_svr = &websocket_start;
     wss->fd_epoll = epoll_create(MAX_CLIENT);
+    wss->map = malloc(sizeof(map_void_t));
+    map_init(wss->map);
+    pr_debug("create new websocket server path = %s\n", wss->path);
     return wss;
 }
 
@@ -306,15 +270,19 @@ static int websocket_client_recv(struct websocket_client *wsc)
     n = recv(wsc->fd, buf, RECV_PKG_MAX, MSG_NOSIGNAL);
 
 #ifdef DEBUG
-    hexdump(buf, n);
+    if (n > 0)
+        hexdump(buf, n);
 #endif
     if (n > 0) {
         char msg[RECV_PKG_MAX] = {0};
-
+        wsc->msg = NULL;
         retlen = websocket_unpackage(wsc, buf, n);
 
         if (retlen == 0 || (retlen < 0 && n - retlen > sizeof(buf)))
         {
+            if (retlen == 0) {
+                pr_debug("rec empty msg\n");
+            }
             retlen += recv(wsc->fd, &buf[retlen], sizeof(buf) - retlen, MSG_NOSIGNAL);
             if (retlen < 0) {
                 pr_war("recv package to big\n");
@@ -349,16 +317,11 @@ static int websocket_client_recv(struct websocket_client *wsc)
             if (retlen > 0) {
                 switch (wsc->msg->type) {
                     case WDT_PING:
-                        {
-                            char buf[1024] = {0};
-                            int len = response_ping(buf);
-                            wsc->loginTimeout = 300;
-                            wsc->send(wsc, buf, len, 0, WDT_PONG);
-                        }
                         break;
                     case WDT_PONG:
                         break;
                     case WDT_DISCONN:
+                        pr_debug("remove client\n");
                         remove_client(wsc);
                         return 0;
                     default:
@@ -367,28 +330,31 @@ static int websocket_client_recv(struct websocket_client *wsc)
             } else
                 ret = -retlen;
         }
-    } else {
-        if (errno == EBADFD) {
-            remove_client(wsc);
-            return 0;
-        }       
     }
+
+    if (n <= 0)
+        return 0;
 
     if (wsc->msg) {
         if (wsc->msg->type == WDT_DISCONN) {
+            pr_debug("remove client\n");
+            remove_client(wsc);
+            return 0;
+        } else if (wsc->msg->type > WDT_PONG) {
             remove_client(wsc);
             return 0;
         }
-    } else {
-        remove_client(wsc);
+    }else {
         return 0;
     }
 
-    if (ret > 0)
+    if (ret > 0) {
         wsc->recvBytes += ret > 0 ? ret : (-ret);
+    }
+
 
     if (wsc->OnMessage)
-        wsc->OnMessage(wsc, wsc->msg);
+        wsc->OnMessage(wsc, wsc->msg->data, wsc->msg->len, wsc->msg->type);
 
     return ret;
 }
@@ -424,48 +390,49 @@ int __attribute__((weak)) OnLogin(struct websocket_client *wsc)
     return 0;
 }
 
-static void ubus_process(struct websocket_client *wsc, struct websocket_message *msg)
+int __attribute__((weak)) OnMessage(struct websocket_client *wsc, const uint8_t *data, ssize_t len, websocket_data_type type)
 {
     int ret = 0;
-    while(1) {
-        wsc->ubus->jtok = json_tokener_new();
-        json_object *data = json_tokener_parse_ex(wsc->ubus->jtok, msg->data, msg->len);
-        if (!data)
-            break;
-        const char *sid = json_object_get_string(json_object_object_get(data, "sid"));
-        const char *obj = json_object_get_string(json_object_object_get(data, "obj"));
-        const char *func = json_object_get_string(json_object_object_get(data, "func"));
-        const char *scope = json_object_get_string(json_object_object_get(data, "scope"));
-        json_object *params = json_object_object_get(data, "params");
+    if (type == WDT_TXTDATA) {
+        if (len) {
+            pr_debug("recved msg:%s\n", data);
+            while(1) {
+                wsc->ubus->jtok = json_tokener_new();
+                json_object *msg = json_tokener_parse_ex(wsc->ubus->jtok, data, len);
 
-        if (!sid && !obj && !func && !scope)
-        {
-            response_msg(wsc, -1, "invalid argument");
-        } else {
-            ret = wsc->ubus->call(wsc->ubus, sid, scope, obj, func, params);
-            if (ret)
-                response_msg(wsc, ret, NULL);
+                if (msg) {
+                    const char *backend = json_object_get_string(json_object_object_get(msg, "backend"));
+                    const char *sid = json_object_get_string(json_object_object_get(msg, "sid"));
+                    const char *scope = json_object_get_string(json_object_object_get(msg, "scope"));
+                    pr_debug("\nbackend = %s\nsid = %s\nscope = %s\n", backend, sid, scope);
+                    if (backend && sid && scope) {
+                        json_object *params = json_object_object_get(msg, "msg");
+                        if (params) {
+                            if (!strcmp(backend, "ubus"))
+                                ubus_message(wsc, params, sid, scope);
+                            else if (!strcmp(backend, "uci"))
+                                uci_message(wsc, params, sid, scope);
+                            else
+                                response_msg(wsc, -1, "uknown backen");
+                        } else {
+                            response_msg(wsc, -1, "invalid argument");
+                        }
+                    }
+                    json_object_put(msg);
+                }
 
-        }
-        json_object_put(data);
-        json_tokener_free(wsc->ubus->jtok);
-        break;
-    }
-}
-
-int __attribute__((weak)) OnMessage(struct websocket_client *wsc, struct websocket_message *msg)
-{
-    int ret = 0;
-    if (msg->type == WDT_TXTDATA) {
-        if (msg->len) {
-            pr_debug("recved msg:%s\n", msg->data);
-            if (!strcmp(wsc->hdr->path, "/ubus"))
-                ubus_process(wsc, msg);
+                json_tokener_free(wsc->ubus->jtok);
+                break;
+            }
         }
     }
+    if (wsc->msg->data)
+        free(wsc->msg->data);
 
-    free(msg->data);
-    free(msg);
+    if (wsc->msg)
+        free(wsc->msg);
+
+    return 0;
 }
 
 int __attribute__((weak)) OnExit(struct websocket_client *wsc)
@@ -484,60 +451,60 @@ struct websocket_client *new_client(void){
     return wsc;
 }
 
+static int remove_wsc(struct websocket_server *wss, struct websocket_client *wsc)
+{
+    wsc->Online = false;
+    wsc->isLogin = false;
+
+    if (wsc->OnExit)
+        wsc->OnExit(wsc);
+
+    wss->count -= 1;
+
+    _epoll_ctrl(wss->fd_epoll, wsc->fd, 0, EPOLL_CTL_DEL, wsc);
+
+    pr_debug("close client fd\n");
+    close(wsc->fd);
+
+    if (wsc) {
+        free(wsc);
+    }
+
+    return 0;
+}
+
 int detect_client(struct websocket_server *wss)
 {
-    struct websocket_client *curr_client = NULL;
-    struct websocket_client *next_client = NULL;
-    struct websocket_client *prev_client = NULL;
-    struct websocket_server *curr_wss = NULL;
-    struct websocket_server *next_wss = NULL;
-    static int timeout = 0;
-    int i;
-    curr_wss = wss;
-    while (1)
-    {
-        next_wss = curr_wss->next;
-        websocket_delayms(500);
-        if (curr_wss) {
-            if (curr_wss->running) {
-                if (curr_wss->count > 0) {
-                    curr_client = curr_wss->wsc;
-                    while(curr_client != NULL) {
-                        next_client = curr_client->next;
-                        if (curr_client->Online) {
-                            if (curr_client->exitType != WET_NONE) {
-                                curr_client->Online = false;
-                                curr_client->isLogin = false;
-                                _epoll_ctrl(curr_wss->fd_epoll, curr_client->fd, 0, EPOLL_CTL_DEL, curr_client);
-                                if (curr_client->OnExit)
-                                    curr_client->OnExit(curr_client);
+    struct tcp_info info;
+    const char *key;
+    map_iter_t iter = map_iter(wss->map);
 
-                                curr_wss->count -= 1;
-                                close(curr_client->fd);
-                                free(curr_client);
-                                if (prev_client)
-                                    prev_client->next = next_client;
-                                else
-                                    curr_wss->wsc = next_client;
-                            }
-                            timeout += 500;
-                            if (timeout == 1000) {
-                                curr_client->loginTimeout -= 1;
-                                if (curr_client->loginTimeout == 0)
-                                    curr_client->exitType = WET_LOGIN_TIMEOUT;
-                            }
-                                
-                        }
-                        if (next_client) {
-                            prev_client = curr_client;
-                            curr_client = next_client;
-                        }    
-                    }
+retry:
+    while(key = map_next(wss->map, &iter))
+    {
+        struct websocket_client *wsc = map_get(wss->map, key);
+        if (wsc) {
+            if (wsc->Online) {
+                if (wsc->exitType != WET_NONE) {
+                    remove_wsc(wss, wsc);
+                    map_remove(wss->map, key);
+                }
+
+                int len = sizeof(info);
+
+                getsockopt(wsc->fd, IPPROTO_TCP, TCP_INFO, &info, (socklen_t *)&len);
+
+                if (info.tcpi_state == TCP_CLOSE_WAIT) {
+                    remove_wsc(wss, wsc);
+                    map_remove(wss->map, key);
                 }
             }
         }
-        if (next_wss) {
-            curr_wss = next_wss;
-        }
+        websocket_delayms(500);
+    }
+    
+    if (!key) {
+        websocket_delayms(500);
+        goto retry;
     }
 }
