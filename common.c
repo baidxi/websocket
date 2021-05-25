@@ -10,7 +10,7 @@
 #include "websocket.h"
 #include "common.h"
 
-int new_thread(void *args, void *thread_cb)
+pthread_t new_thread(void *args, void *thread_cb)
 {
     pthread_t th;
     pthread_attr_t  attr;
@@ -19,11 +19,13 @@ int new_thread(void *args, void *thread_cb)
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
     ret = pthread_create(&th, &attr, thread_cb, args);
-    if (ret != 0)
+    if (ret != 0) {
         pr_err("pthread_create:failed (%s)\n", strerror(errno));
-
+        th = -1;
+    }
+    
     pthread_attr_destroy(&attr);
-    return ret;
+    return th;
 }
 
 void _epoll_ctrl(int fd_epoll, int fd, uint32_t event, int ctrl, void *ptr)

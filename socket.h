@@ -5,11 +5,13 @@
 #ifndef WEBSOCKET_SOCKET_H
 #define WEBSOCKET_SOCKET_H
 #include <stdint.h>
+#include <pthread.h>
 #include "websocket.h"
 
 struct socket_server {
     int fd;
     int epoll_fd;
+    pthread_t tid;
     int (*start)(struct socket_server *);
     struct websocket_server *wss;
 };

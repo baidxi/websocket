@@ -51,7 +51,12 @@ static int start_svr(struct socket_server *server)
         free(server);
         return -1;
     }
-    return new_thread(server, &socket_server);
+    server->tid = new_thread(server, &socket_server);
+
+    if (server->tid == -1)
+        return -1;
+
+    return 0;
 }
 
 struct socket_server *new_socket(const char *ip, uint16_t port)

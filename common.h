@@ -46,7 +46,7 @@ struct config {
     const char *path;
 };
 
-int new_thread(void *args, void *thread_cb);
+pthread_t new_thread(void *args, void *thread_cb);
 void _epoll_ctrl(int fd_epoll, int fd, uint32_t event, int ctrl, void *ptr);
 int response_msg(struct websocket_client *wsc, int value, const char *str);
 

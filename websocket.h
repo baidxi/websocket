@@ -89,9 +89,7 @@ struct websocket_client {
     uint32_t  recvBytes;
     uint32_t order;
     uint32_t loginTimeout;
-    pthread_t tid;
     struct websocket_message *msg;
-    struct websocket_client *next;
     int (*OnLogin)(struct websocket_client *);
     int (*OnMessage)(struct websocket_client *, const uint8_t *, ssize_t, websocket_data_type);
     int (*OnExit)(struct websocket_client *);
@@ -101,7 +99,6 @@ struct websocket_client {
 };
 
 struct websocket_server {
-    map_void_t *map;
     int fd;
     int fd_epoll;
     int count;
@@ -110,9 +107,8 @@ struct websocket_server {
     char path[128];
     void *priv;
     pthread_t tid;
-    struct websocket_client *wsc;
-    struct websocket_server *next;
     int (*start_svr)(struct websocket_server *, int);
+    map_void_t *map;
 };
 
 int websocket_add_client(struct websocket_server *, int fd);

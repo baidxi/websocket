@@ -22,6 +22,7 @@
 #include "hexdump.h"
 #include "hashmap.h"
 
+
 void websocket_delayus(unsigned int us)
 {
     struct timeval tim;
@@ -95,7 +96,6 @@ static int remove_client(struct websocket_client *wsc)
 static void websocket_service_thread(void *args)
 {
     struct websocket_server *wss = args;
-    wss->tid = pthread_self();
 
     while(!wss->count) {
         websocket_delayms(100);
@@ -129,6 +129,7 @@ static int response_client(struct websocket_client *wsc, const char *key)
 static int websocket_client_add_to_hashmap(struct websocket_server *wss, struct websocket_client *wsc)
 {
     map_set(wss->map, wsc->hdr->key, wsc);
+    wss->count += 1;
     _epoll_ctrl(wss->fd_epoll, wsc->fd, EPOLLET | EPOLLIN, EPOLL_CTL_ADD, wsc);
     return 0;
 
@@ -202,16 +203,15 @@ int websocket_add_client(struct websocket_server *wss, int fd)
     struct websocket_client *wsc =new_client();
     wsc->hdr = http->wsc;
     wsc->fd = fd;
-    wsc->next = NULL;
 
     if (response_client(wsc, http->wsc->key) < 0)
     {
-	 pr_err("response failed:%s\n", strerror(errno));
-	 free(http->wsc);
-	 free(http);
-	 free(wsc);
-	 close(fd);
-	 return -1;
+        pr_err("response failed:%s\n", strerror(errno));
+        free(http->wsc);
+        free(http);
+        free(wsc);
+        close(fd);
+        return -1;
     }
     wsc->isLogin = true;
     wsc->Online = true;
@@ -230,7 +230,12 @@ static int websocket_start(struct websocket_server *wss, int load)
     if (!wss)
         return -1;
     wss->load = load;
-    return new_thread(wss, &websocket_service_thread);
+    wss->tid = new_thread(wss, &websocket_service_thread);
+
+    if (wss->tid == -1)
+        return -1;
+
+    return 0;
 }
 
 struct websocket_server *new_weboskcet_server(const char *path)
@@ -440,7 +445,8 @@ int __attribute__((weak)) OnExit(struct websocket_client *wsc)
 
 }
 
-struct websocket_client *new_client(void){
+struct websocket_client *new_client(void)
+{
     struct websocket_client *wsc = malloc(sizeof(struct websocket_client));
     wsc->recv = &websocket_client_recv;
     wsc->send = &websocket_client_send;
@@ -466,9 +472,7 @@ static int remove_wsc(struct websocket_server *wss, struct websocket_client *wsc
     pr_debug("close client fd\n");
     close(wsc->fd);
 
-    if (wsc) {
-        free(wsc);
-    }
+    map_remove(wss->map, wsc->hdr->key);
 
     return 0;
 }
@@ -477,17 +481,19 @@ int detect_client(struct websocket_server *wss)
 {
     struct tcp_info info;
     const char *key;
-    map_iter_t iter = map_iter(wss->map);
+    map_iter_t iter;
+    struct websocket_client *wsc;
+loop:
+    iter = map_iter(wss->map);
 
-retry:
     while(key = map_next(wss->map, &iter))
     {
-        struct websocket_client *wsc = map_get(wss->map, key);
+        void **tmp = map_get(wss->map, key);
+        wsc = *tmp;
         if (wsc) {
             if (wsc->Online) {
                 if (wsc->exitType != WET_NONE) {
                     remove_wsc(wss, wsc);
-                    map_remove(wss->map, key);
                 }
 
                 int len = sizeof(info);
@@ -496,15 +502,16 @@ retry:
 
                 if (info.tcpi_state == TCP_CLOSE_WAIT) {
                     remove_wsc(wss, wsc);
-                    map_remove(wss->map, key);
                 }
+            } else {
+                remove_wsc(wss, wsc);
             }
         }
-        websocket_delayms(500);
+
     }
     
     if (!key) {
-        websocket_delayms(500);
-        goto retry;
+        websocket_delayms(15 * 1000);
+        goto loop;
     }
 }

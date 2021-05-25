@@ -7,6 +7,7 @@
 #include "socket.h"
 #include "websocket.h"
 #include "common.h"
+#include "hashmap.h"
 
 #ifdef DEBUG
 #include <syslog.h>
@@ -77,9 +78,41 @@ struct config *parse_args(int argc, char **argv)
 
     return conf;
 }
+struct socket_server *sock;
 
-int main(int argc, char **argv) {
+static void signal_process(int sig)
+{
+    if (sig == SIGINT)
+    {
+        pthread_cancel(sock->wss->tid);
+        pthread_cancel(sock->tid);
+        const char *key;
+        map_iter_t iter;
+        struct websocket_client *wsc;
+        struct websocket_server *wss = sock->wss;
+        while(key = map_next(wss->map, &iter))
+        {
+            void **tmp = *map_get(wss->map, key);
+            wsc = *tmp;
+            _epoll_ctrl(wss->fd_epoll, wsc->fd, 0, EPOLL_CTL_DEL, wsc);
+            close(wsc->fd);
+            free(wsc);
+        }
+
+        close(wss->fd_epoll);
+        close(wss->fd);
+        free(wss);
+        close(sock->epoll_fd);
+        close(sock->fd);
+        free(sock);
+        exit(EXIT_SUCCESS);
+    }
+}
+
+int main(int argc, char **argv) 
+{
     int i = 0;
+    int ret = 0;
     pr_debug("starting websocket server\n");
     
     struct config *conf = parse_args(argc, argv);
@@ -87,28 +120,47 @@ int main(int argc, char **argv) {
     if (conf == NULL)
         return -1;
 
-    struct socket_server *sock = new_socket(conf->addr, conf->port);
-    pr_debug("socket create ok\n");
-    struct websocket_server *wss = new_weboskcet_server(conf->path);
-    pr_debug("websocket create ok\n");
+    sock = new_socket(conf->addr, conf->port);
 
     if (!sock) {
         pr_err("socket error\n");
-        return -1;
+        goto err_out1;
     }
 
-    sock->start(sock);
-
+    pr_debug("socket create ok\n");
+    ret = sock->start(sock);
+    if (ret < 0) {
+        pr_err("sock thread start failed:%s\n", strerror(errno));
+        goto err_sock;
+    }
+    struct websocket_server *wss = new_weboskcet_server(conf->path);
+    
     if (!wss) {
         pr_err("wss failed\n");
-        return -1;
+        goto err_sock;
     }
+    pr_debug("websocket create ok\n");
 
     sock->wss = wss;
-    sock->wss->start_svr(sock->wss, 1024);
+    if (sock->wss->start_svr(sock->wss, 1024) < 0)
+    {
+        pr_err("websocket thread start failed:%s\n", strerror(errno));
+        pthread_cancel(sock->tid);
+        goto err_wss;
+    }
     websocket_delayms(1000);
+    signal(SIGINT, signal_process);
+    free(conf);
 
     detect_client(sock->wss);
 
-    return 0;
+err_wss:
+    free(wss);
+
+err_sock:
+    free(sock);
+
+err_out1:
+    free(conf);
+    return -1;
 }
