@@ -146,6 +146,8 @@ int main(int argc, char **argv)
     {
         pr_err("websocket thread start failed:%s\n", strerror(errno));
         pthread_cancel(sock->tid);
+        close(sock->epoll_fd);
+        close(sock->fd);
         goto err_wss;
     }
     websocket_delayms(1000);
