@@ -14,7 +14,6 @@
 #include <fcntl.h>
 #include "socket.h"
 #include "common.h"
-#include "websocket.h"
 
 static void socket_server(void *args)
 {
@@ -34,7 +33,7 @@ static void socket_server(void *args)
                 if (events[i].data.fd == svr->fd) {
                     int newfd = accept(svr->fd, (struct sockaddr *)&client_addr, &n);
                     if (newfd >= 0) {
-                        websocket_add_client(svr->wss, newfd);
+                        svr->wss->add_wsc(svr->wss, newfd);
                     }
                 }
             }

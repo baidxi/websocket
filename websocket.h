@@ -108,10 +108,11 @@ struct websocket_server {
     void *priv;
     pthread_t tid;
     int (*start_svr)(struct websocket_server *, int);
+    int (*add_wsc)(struct websocket_server *wss, int fd);
+    int (*detect_client)(struct websocket_server *wss);
     map_void_t *map;
 };
 
-int websocket_add_client(struct websocket_server *, int fd);
 int buildResponseShakekey(const char *inkey, ssize_t len, char *outkey);
 struct websocket_server *new_weboskcet_server(const char *path);
 struct websocket_client *new_client(void);
@@ -119,5 +120,4 @@ void websocket_delayus(unsigned int us);
 void websocket_delayms(unsigned int ms);
 int buildshakekey(char *key);
 char *getrandomstring(ssize_t len);
-int detect_client(struct websocket_server *wss);
 #endif //WEBSOCKET_WEBSOCKET_H

@@ -23,6 +23,9 @@
 #include "hashmap.h"
 
 
+static int detect_client(struct websocket_server *wss);
+static int websocket_add_client(struct websocket_server *, int fd);
+
 void websocket_delayus(unsigned int us)
 {
     struct timeval tim;
@@ -174,7 +177,7 @@ static int isValid_request(struct websocket_server *wss, struct http_hdr *hdr)
     return 0;
 }
 
-int websocket_add_client(struct websocket_server *wss, int fd)
+static int websocket_add_client(struct websocket_server *wss, int fd)
 {
     char buf[1024] = {0};
     struct http_hdr *http;
@@ -257,6 +260,8 @@ struct websocket_server *new_weboskcet_server(const char *path)
     wss->start_svr = &websocket_start;
     wss->fd_epoll = epoll_create(MAX_CLIENT);
     wss->map = malloc(sizeof(map_void_t));
+    wss->add_wsc = websocket_add_client;
+    wss->detect_client = detect_client;
     map_init(wss->map);
     pr_debug("create new websocket server path = %s\n", wss->path);
     return wss;
@@ -477,7 +482,7 @@ static int remove_wsc(struct websocket_server *wss, struct websocket_client *wsc
     return 0;
 }
 
-int detect_client(struct websocket_server *wss)
+static int detect_client(struct websocket_server *wss)
 {
     struct tcp_info info;
     const char *key;

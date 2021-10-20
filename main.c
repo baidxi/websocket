@@ -154,7 +154,7 @@ int main(int argc, char **argv)
     signal(SIGINT, signal_process);
     free(conf);
 
-    detect_client(sock->wss);
+    wss->detect_client(wss);
 
 err_wss:
     free(wss);
